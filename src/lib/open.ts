@@ -10,15 +10,25 @@ const OPENER: [string, string[]] =
       ? ['open', []]
       : ['xdg-open', []]
 
-/** Open an http(s) url in the default browser. Best effort — never throws. */
-export function openExternal(url: string | undefined): void {
-  if (!url || !isProbablyUrl(url)) return
+function launch(command: string, args: string[]): void {
   try {
-    const [command, args] = OPENER
-    const child = spawn(command, [...args, url], {stdio: 'ignore', detached: true})
+    const child = spawn(command, args, {stdio: 'ignore', detached: true})
     child.on('error', () => {})
     child.unref()
   } catch {
     // no opener on this system — nothing useful to do from a TUI
   }
+}
+
+/** Open an http(s) url in the default browser. Best effort — never throws. */
+export function openExternal(url: string | undefined): void {
+  if (!url || !isProbablyUrl(url)) return
+  const [command, args] = OPENER
+  launch(command, [...args, url])
+}
+
+/** Show a folder in the file manager. Best effort — never throws. */
+export function openFolder(dir: string): void {
+  if (process.platform === 'win32') launch('explorer.exe', [dir])
+  else launch(OPENER[0], [dir])
 }

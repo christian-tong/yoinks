@@ -77,8 +77,13 @@ export async function findFfmpeg(): Promise<string | undefined> {
 }
 
 export type VideoInfo = {
+  id?: string
   title: string
   uploader?: string
+  /** music metadata — set for YouTube Music tracks */
+  artist?: string
+  track?: string
+  album?: string
   duration?: number
   webpage_url?: string
   thumbnail?: string
@@ -156,6 +161,43 @@ export function platformFolder(url: string): string {
 
 /** Output template for a video, relative to the videos folder. */
 export const videoTemplate = (url: string) => `${platformFolder(url)}/%(title).60s [%(id)s].%(ext)s`
+
+// a literal for --parse-metadata's FROM side: `%` is a template escape, `:` splits FROM:TO
+const metadataLiteral = (text: string) => text.replaceAll('%', '%%').replaceAll(':', '\\:')
+
+/** Where a track sits in an album or playlist being downloaded song by song. */
+export type AlbumSlot = {title: string; index: number}
+
+// crops the 16:9 video thumbnail to a centered square, like real cover art
+const SQUARE_COVER = `ThumbnailsConvertor+FFmpeg_o:-c:v mjpeg -vf crop="'if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'"`
+
+/**
+ * mp3 with cover art and tags. Artist comes from YouTube Music's metadata,
+ * else the channel (minus " - Topic"), else an "Artist - Song" title.
+ */
+export function musicChoice(album?: AlbumSlot): DownloadChoice {
+  const args = [
+    '-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0',
+    '--embed-metadata', '--embed-thumbnail', '--convert-thumbnails', 'jpg', '--ppa', SQUARE_COVER,
+    '--parse-metadata', '%(artist,uploader)s:(?P<artist>.+?)(?: - Topic)?$',
+    '--parse-metadata', '%(track,title)s:(?P<artist>.+?) - (?P<track>.+)',
+    '--replace-in-metadata', 'track', String.raw`(?i)\s*[(\[](?:official|lyrics?|audio|video|visualizer|hd|4k)[^)\]]*[)\]]`, '',
+  ]
+  if (album) {
+    args.push(
+      '--parse-metadata', `${metadataLiteral(album.title)}:(?P<album>.+)`,
+      '--parse-metadata', `${album.index}:(?P<track_number>.+)`,
+    )
+  }
+  return {kind: 'audio', label: 'mp3 · cover + tags', args}
+}
+
+/** Artist/Song.mp3, or Artist/Album/01 Song.mp3 — relative to the music folder. */
+export function musicTemplate(album?: AlbumSlot): string {
+  const song = '%(track,title)s.%(ext)s'
+  if (!album) return `%(artist,uploader)s/${song}`
+  return `%(artist,uploader)s/${safeSegment(album.title)}/${String(album.index).padStart(2, '0')} ${song}`
+}
 
 export type DownloadChoice = {
   label: string

@@ -35,6 +35,12 @@ test('collects every positional as an input, in order', () => {
   ])
 })
 
+test('turns on music mode', () => {
+  assert.equal(parseArgs(['--music', 'a.md']).music, true)
+  assert.equal(parseArgs(['-m']).music, true)
+  assert.equal(parseArgs(['a.md']).music, undefined)
+})
+
 test('recognizes only supported modes and cycles through all of them', () => {
   assert.equal(isThemeMode('auto'), true)
   assert.equal(isThemeMode('light'), true)

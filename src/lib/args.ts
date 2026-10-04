@@ -6,6 +6,8 @@ export type CliArgs = {
   /** urls or file paths, in order — cli.tsx expands files */
   inputs: string[]
   themeMode?: ThemeMode
+  /** start in music mode: mp3 + cover + tags into the music folder */
+  music?: boolean
   error?: string
 }
 
@@ -18,6 +20,8 @@ export function parseArgs(args: string[]): CliArgs {
       result.help = true
     } else if (arg === '-v' || arg === '--version') {
       result.version = true
+    } else if (arg === '-m' || arg === '--music') {
+      result.music = true
     } else if (arg === '--theme') {
       const value = args[++index]
       if (!value) return {...result, error: '--theme needs a value: auto, light, or dark'}

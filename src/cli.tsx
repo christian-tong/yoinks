@@ -102,6 +102,7 @@ const {waitUntilExit} = render(
     initialUrls={initialUrls}
     clipboardUrls={clipboardUrls}
     initialThemeMode={initialThemeMode}
+    initialMusic={Boolean(args.music)}
     onOutcome={result => (outcome = result)}
   />,
   // keep a copy of every frame so clicks can be hit-tested against it

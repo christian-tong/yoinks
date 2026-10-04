@@ -17,7 +17,7 @@ import {loadConfig, saveConfig} from './lib/config.js'
 import {pickFile, pickFolder} from './lib/dialogs.js'
 import {addToHistory, loadHistory} from './lib/history.js'
 import {extractUrls, looksLikeFile, MAX_LINKS, readLinkFile} from './lib/links.js'
-import {openExternal} from './lib/open.js'
+import {openExternal, openFolder} from './lib/open.js'
 import {detectPlatform, type Platform} from './lib/platforms.js'
 import {useMouseClick} from './lib/use-mouse-click.js'
 import {nextThemeMode, ThemeProvider, type ThemeMode, useTheme} from './theme.js'
@@ -29,8 +29,11 @@ import {
   ensureYtDlp,
   estimateSize,
   findFfmpeg,
+  musicChoice,
+  musicTemplate,
   probe,
   videoTemplate,
+  type AlbumSlot,
   type DownloadChoice,
   type DownloadProgress,
   type VideoInfo,
@@ -103,15 +106,34 @@ type BatchItem = {
   info?: VideoInfo
   infoJsonPath?: string
   error?: string
+  /** set for songs that came from an album or playlist */
+  album?: AlbumSlot
 }
 
 const isReady = (item: BatchItem) => item.status === 'ok'
 const isPicked = (item: BatchItem) => item.status === 'ok' && item.selected
 
-function reviewRow(item: BatchItem, width: number): string {
+/** A best guess at "Artist — Song" for the review list; yt-dlp writes the real tags. */
+function songLabel(item: BatchItem): string {
+  const info = item.info
+  if (!info) return item.url
+  const fromTitle = /^(.+?) - (.+)$/.exec(info.title)
+  const artist = info.artist ?? info.uploader?.replace(/ - Topic$/, '') ?? fromTitle?.[1]
+  const track = info.track ?? (info.artist || !fromTitle ? info.title : fromTitle[2])
+  return artist ? `${artist} — ${track}` : track
+}
+
+function reviewRow(item: BatchItem, width: number, music: boolean): string {
   if (item.status === 'probing') return truncate(`  ⋯  ${item.url}`, width)
   if (item.status === 'error') return truncate(`  ✗  ${item.error} · ${item.url}`, width)
   const info = item.info!
+  if (music) {
+    const meta = [item.album?.title ?? info.album ?? '', info.duration ? formatDuration(info.duration) : '']
+      .filter(Boolean)
+      .join(' · ')
+    const song = truncate(songLabel(item), Math.max(12, width - meta.length - 9))
+    return truncate(`${item.selected ? '[x]' : '[ ]'} ${song}${meta ? ` · ${meta}` : ''}`, width)
+  }
   const size = estimateSize(info)
   const meta = [
     detectPlatform(item.url).label,
@@ -167,7 +189,10 @@ const HINTS: Record<Phase['name'], Array<[string, string]>> = {
     ['esc', 'cancel'],
     ['^c', 'quit'],
   ],
-  done: [['^c', 'quit']],
+  done: [
+    ['o', 'open folder'],
+    ['^c', 'quit'],
+  ],
   error: [
     ['↵', 'try again'],
     ['^c', 'quit'],
@@ -190,7 +215,10 @@ const HINTS: Record<Phase['name'], Array<[string, string]>> = {
     ['esc', 'cancel'],
     ['^c', 'quit'],
   ],
-  'batch-done': [['^c', 'quit']],
+  'batch-done': [
+    ['o', 'open folder'],
+    ['^c', 'quit'],
+  ],
 }
 
 // every branch is exactly three rows — bar, gap, meta — so the layout never jumps
@@ -254,6 +282,7 @@ type AppProps = {
   initialUrls: string[]
   clipboardUrls: string[]
   initialThemeMode?: ThemeMode
+  initialMusic?: boolean
   onOutcome: (outcome: Outcome) => void
 }
 
@@ -273,11 +302,13 @@ export function App({initialThemeMode = 'auto', ...props}: AppProps) {
 function AppContent({
   initialUrls,
   clipboardUrls,
+  initialMusic = false,
   onOutcome,
   cycleTheme,
 }: {
   initialUrls: string[]
   clipboardUrls: string[]
+  initialMusic?: boolean
   onOutcome: (outcome: Outcome) => void
   cycleTheme: () => void
 }) {
@@ -289,6 +320,9 @@ function AppContent({
   const [urlInput, setUrlInput] = useState('')
   const [history, setHistory] = useState(loadHistory)
   const [config, setConfig] = useState(loadConfig)
+  // music mode: mp3 + cover + tags into <musicDir>/<artist>/
+  const [music, setMusic] = useState(initialMusic)
+  const saveDir = music ? config.musicDir : config.videoDir
   const [platform, setPlatform] = useState<Platform>()
   const [info, setInfo] = useState<VideoInfo>()
   const [choices, setChoices] = useState<DownloadChoice[]>([])
@@ -417,8 +451,14 @@ function AppContent({
   const reviewDone = batch.length > 0 && !batch.some(item => item.status === 'probing')
   const continueBatch = () => {
     if (!reviewDone || !batch.some(isPicked)) return
+    // songs are always mp3 — no quality to pick
+    if (music) return startBatchDownload(musicChoice())
     highlightRef.current = 0
     setPhase({name: 'batch-picking'})
+  }
+  const doneFolder = () => {
+    if (phase.name === 'done') openFolder(path.dirname(phase.filepath))
+    if (phase.name === 'batch-done') openFolder(saveDir)
   }
 
   useInput(
@@ -431,7 +471,9 @@ function AppContent({
       if (key.ctrl && phase.name === 'input') {
         if (input === 'o') openList()
         if (input === 'd') chooseFolder()
+        if (input === 'g') setMusic(on => !on)
       }
+      if (input === 'o' && !key.ctrl && (phase.name === 'done' || phase.name === 'batch-done')) doneFolder()
       if (key.return && (phase.name === 'error' || phase.name === 'done' || phase.name === 'batch-done')) resetToInput()
       if (phase.name === 'reviewing') {
         if (key.upArrow) setReviewCursor(cursor => Math.max(0, cursor - 1))
@@ -447,7 +489,8 @@ function AppContent({
 
   const startLinks = (urls: string[]) => {
     setUrl(urls.join(' '))
-    if (urls.length === 1) void startProbe(urls[0]!)
+    // music always goes through the review list — it's where you check the song
+    if (urls.length === 1 && !music) void startProbe(urls[0]!)
     else void startBatch(urls)
   }
 
@@ -474,12 +517,13 @@ function AppContent({
     pickFile().then(filepath => filepath && submitFile(filepath), showWarning)
   }
   const chooseFolder = () => {
-    pickFolder().then(dir => dir && setConfig(saveConfig({videoDir: dir})), showWarning)
+    pickFolder().then(dir => dir && setConfig(saveConfig(music ? {musicDir: dir} : {videoDir: dir})), showWarning)
   }
   // the clickable row under the input — the footer is already full
   const inputActions: Array<[string, string, () => void]> = [
+    ['^g', music ? '♪ music' : '▶ video', () => setMusic(on => !on)],
     ['^o', 'open a list', openList],
-    ['^d', `save to ${shortenPath(config.videoDir, os.homedir(), 32)}`, chooseFolder],
+    ['^d', `save to ${shortenPath(saveDir, os.homedir(), 28)}`, chooseFolder],
   ]
 
   const clipboardText = clipboardUrls.join(' ')
@@ -540,7 +584,7 @@ function AppContent({
       const ffmpegLocation = await findFfmpeg()
       for (const [index, item] of picked.entries()) {
         if (controller.signal.aborted) return
-        const title = item.info?.title ?? item.url
+        const title = music ? songLabel(item) : (item.info?.title ?? item.url)
         setPhase({name: 'batch-downloading', index, total: picked.length, title, choice, processing: false})
         try {
           const filepath = await downloadWithRetry(
@@ -549,9 +593,9 @@ function AppContent({
               ffmpegLocation,
               url: item.url,
               infoJsonPath: item.infoJsonPath,
-              choice,
-              outDir: config.videoDir,
-              outTemplate: videoTemplate(item.url),
+              choice: music ? musicChoice(item.album) : choice,
+              outDir: saveDir,
+              outTemplate: music ? musicTemplate(item.album) : videoTemplate(item.url),
             },
             downloadHandlers,
             controller.signal,
@@ -573,6 +617,9 @@ function AppContent({
   if (phase.name === 'input' && history.length > 0) {
     hints = [hints[0]!, ['↑', 'history'], ...hints.slice(1)]
   }
+  if (phase.name === 'reviewing' && music) {
+    hints = hints.map(([key, label]): [string, string] => (key === '↵' ? [key, 'yoink'] : [key, label]))
+  }
 
   // Anything a mouse user would expect to press is clickable. Targets are
   // found by their text in the rendered frame (see lib/click-map.ts), so
@@ -588,6 +635,7 @@ function AppContent({
       if (phase.name === 'batch-picking') return () => startBatchDownload(BATCH_PRESETS[highlightRef.current]!)
       if (phase.name === 'error' || phase.name === 'done' || phase.name === 'batch-done') return resetToInput
     }
+    if (key === 'o' && (phase.name === 'done' || phase.name === 'batch-done')) return doneFolder
     if (phase.name === 'reviewing') {
       if (key === 'space') return () => togglePick(reviewCursor)
       if (key === 'a') return toggleAll
@@ -662,12 +710,12 @@ function AppContent({
 
       {phase.name === 'input' && (
         <Box flexDirection="column" alignItems="center">
-          <FramedInput title="Paste a link" width={boxWidth} button={YOINK_BUTTON}>
+          <FramedInput title={music ? 'Paste songs' : 'Paste a link'} width={boxWidth} button={YOINK_BUTTON}>
             <TextInput
               value={urlInput}
               onChange={setUrlInput}
               onSubmit={handleUrlSubmit}
-              placeholder="https://youtube.com/watch?v=…"
+              placeholder={music ? 'https://music.youtube.com/watch?v=…' : 'https://youtube.com/watch?v=…'}
               width={boxWidth - 6}
               history={history}
               submitOnPaste={value => extractUrls(value).length > 0}
@@ -760,7 +808,7 @@ function AppContent({
                 dimColor={item.status !== 'ok' && theme.dimSecondary}
               >
                 {current ? '❯ ' : '  '}
-                {reviewRow(item, contentWidth - 2)}
+                {reviewRow(item, contentWidth - 2, music)}
               </Text>
             )
           })}
@@ -812,7 +860,7 @@ function AppContent({
             <Text bold color={theme.primary}>✓ {phase.saved.length} yoinked</Text>
             {phase.failed.length > 0 ? <Text color={theme.primary}> · ✗ {phase.failed.length} failed</Text> : null}
           </Text>
-          <Text color={theme.gray} dimColor={theme.dimSecondary}>{shortenPath(config.videoDir, os.homedir(), 60)}</Text>
+          <Text color={theme.gray} dimColor={theme.dimSecondary}>{shortenPath(saveDir, os.homedir(), 60)}</Text>
           {phase.failed.slice(0, 5).map(({title, message}, index) => (
             <Text key={index} color={theme.gray} dimColor={theme.dimSecondary}>
               ✗ {truncate(`${title}: ${message}`, contentWidth - 2)}
