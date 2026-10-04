@@ -3,6 +3,7 @@
   "version": "0.3.1",
   "description": "yoink any video from YouTube, X, Instagram, Threads & 1800+ sites — right from your terminal. paste. yoink. done.",
   "type": "module",
+  "private": true,
   "bin": {
     "yoinks": "dist/cli.js"
   },
@@ -22,6 +23,9 @@
     "prepublishOnly": "npm test && npm run typecheck && npm run build"
   },
   "author": "Pablo Stanley",
+  "contributors": [
+    "Christian Tong (fork maintainer)"
+  ],
   "keywords": [
     "video",
     "downloader",
@@ -51,10 +55,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pablostanley/yoinks.git"
+    "url": "git+https://github.com/christian-tong/yoinks.git"
   },
-  "homepage": "https://github.com/pablostanley/yoinks#readme",
+  "homepage": "https://github.com/christian-tong/yoinks#readme",
   "bugs": {
-    "url": "https://github.com/pablostanley/yoinks/issues"
+    "url": "https://github.com/christian-tong/yoinks/issues"
   }
 }

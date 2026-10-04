@@ -41,7 +41,7 @@ This fork isn't published to npm (`npm install -g yoinks` gets the original).
 Install it from source:
 
 ```sh
-git clone __FORK_URL__.git
+git clone https://github.com/christian-tong/yoinks.git
 cd yoinks
 npm ci
 npm run build
