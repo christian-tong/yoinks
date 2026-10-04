@@ -3,14 +3,14 @@ import {isThemeMode, type ThemeMode} from '../theme.js'
 export type CliArgs = {
   help: boolean
   version: boolean
-  initialUrl?: string
+  /** urls or file paths, in order — cli.tsx expands files */
+  inputs: string[]
   themeMode?: ThemeMode
   error?: string
 }
 
 export function parseArgs(args: string[]): CliArgs {
-  const result: CliArgs = {help: false, version: false}
-  const positional: string[] = []
+  const result: CliArgs = {help: false, version: false, inputs: []}
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]!
@@ -30,11 +30,9 @@ export function parseArgs(args: string[]): CliArgs {
     } else if (arg.startsWith('-')) {
       return {...result, error: `unknown option “${arg}”`}
     } else {
-      positional.push(arg)
+      result.inputs.push(arg)
     }
   }
 
-  if (positional.length > 1) return {...result, error: 'expected a single url'}
-  result.initialUrl = positional[0]
   return result
 }

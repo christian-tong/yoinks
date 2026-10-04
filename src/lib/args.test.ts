@@ -8,7 +8,7 @@ test('parses a url and a spaced theme option without confusing the value for the
     help: false,
     version: false,
     themeMode: 'light',
-    initialUrl: 'https://example.com/video',
+    inputs: ['https://example.com/video'],
   })
 })
 
@@ -17,7 +17,7 @@ test('parses an equals-style theme option after the url', () => {
     help: false,
     version: false,
     themeMode: 'dark',
-    initialUrl: 'https://example.com/video',
+    inputs: ['https://example.com/video'],
   })
 })
 
@@ -25,7 +25,14 @@ test('rejects missing, invalid, and unknown options', () => {
   assert.match(parseArgs(['--theme']).error ?? '', /needs a value/)
   assert.match(parseArgs(['--theme', 'sepia']).error ?? '', /unknown theme/)
   assert.match(parseArgs(['--wat']).error ?? '', /unknown option/)
-  assert.match(parseArgs(['one', 'two']).error ?? '', /single url/)
+})
+
+test('collects every positional as an input, in order', () => {
+  assert.deepEqual(parseArgs(['https://a.com', 'links.md', '--theme=dark', 'https://b.com']).inputs, [
+    'https://a.com',
+    'links.md',
+    'https://b.com',
+  ])
 })
 
 test('recognizes only supported modes and cycles through all of them', () => {

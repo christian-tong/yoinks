@@ -1,9 +1,11 @@
 import React from 'react'
+import fs from 'node:fs'
 import {createRequire} from 'node:module'
 import {render} from 'ink'
 import {App, type Outcome} from './app.js'
 import {captureFrames} from './lib/click-map.js'
 import {parseArgs} from './lib/args.js'
+import {extractUrls, MAX_LINKS} from './lib/links.js'
 import {readClipboard} from './lib/clipboard.js'
 import {isProbablyUrl} from './lib/platforms.js'
 
@@ -15,12 +17,13 @@ const HELP = `
   yoinks — yoink any video. paste. yoink. done.
 
   Usage
-    $ yoinks [url]
+    $ yoinks [url | file ...]
 
   Examples
     $ yoinks https://youtu.be/dQw4w9WgXcQ
-    $ yoinks https://x.com/user/status/123456
-    $ yoinks                 (prompts for a url)
+    $ yoinks https://x.com/user/status/123456 https://youtu.be/dQw4w9WgXcQ
+    $ yoinks links.txt       (every link in a .txt / .md / any text file)
+    $ yoinks                 (prompts for a url — paste one or many)
 
   Options
     --theme <mode>  use auto, light, or dark for this run
@@ -48,17 +51,39 @@ if (args.version) {
   process.exit(0)
 }
 
-const initialUrl = args.initialUrl
+const MAX_FILE_BYTES = 1024 * 1024
+
+function fail(message: string): never {
+  console.error(`yoinks: ${message}`)
+  process.exit(1)
+}
+
+// a positional that isn't a url is a file of links
+function expandInput(input: string): string[] {
+  if (isProbablyUrl(input)) return [input]
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(input)
+  } catch {
+    fail(`“${input}” isn't a link or a file`)
+  }
+  if (!stat.isFile()) fail(`“${input}” isn't a file`)
+  if (stat.size > MAX_FILE_BYTES) fail(`“${input}” is too big — keep link files under 1 MB`)
+  const urls = extractUrls(fs.readFileSync(input, 'utf8'))
+  if (urls.length === 0) fail(`no links found in “${input}”`)
+  return urls
+}
+
+const initialUrls = [...new Set(args.inputs.flatMap(expandInput))]
+if (initialUrls.length > MAX_LINKS) fail(`${initialUrls.length} links is too many — ${MAX_LINKS} max per run`)
 const initialThemeMode = args.themeMode ?? 'auto'
 
 const isTTY = Boolean(process.stdout.isTTY)
 
-// no url given — offer the clipboard url (⇥ to paste) when it already holds one
-let clipboardUrl: string | undefined
-if (!initialUrl && isTTY) {
-  const clipped = readClipboard().trim()
-  // reject multi-line clipboard content — new URL() silently strips newlines
-  if (clipped && !/\s/.test(clipped) && isProbablyUrl(clipped)) clipboardUrl = clipped
+// no url given — offer the clipboard's links (⇥ to paste) when it holds some
+let clipboardUrls: string[] = []
+if (initialUrls.length === 0 && isTTY) {
+  clipboardUrls = extractUrls(readClipboard()).slice(0, MAX_LINKS)
 }
 const enterAltScreen = () => process.stdout.write('\x1b[?1049h\x1b[H')
 // also switch mouse tracking off — a crash can skip React effect cleanup
@@ -79,11 +104,11 @@ if (isTTY) {
   }
 }
 
-let outcome: Outcome = {}
+let outcome: Outcome = {filepaths: []}
 const {waitUntilExit} = render(
   <App
-    initialUrl={initialUrl}
-    clipboardUrl={clipboardUrl}
+    initialUrls={initialUrls}
+    clipboardUrls={clipboardUrls}
     initialThemeMode={initialThemeMode}
     onOutcome={result => (outcome = result)}
   />,
@@ -94,6 +119,6 @@ const {waitUntilExit} = render(
 await waitUntilExit()
 
 if (isTTY) leaveAltScreen()
-if (outcome.filepath) {
-  console.log(`✓ yoinked → ${outcome.filepath}`)
+for (const filepath of outcome.filepaths) {
+  console.log(`✓ yoinked → ${filepath}`)
 }

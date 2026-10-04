@@ -33,9 +33,17 @@ automatically.
 
 ```sh
 $ yoinks https://youtu.be/dQw4w9WgXcQ    # straight to the format picker
-$ yoinks                                 # prompts for a url
+$ yoinks <url> <url> …                    # several at once
+$ yoinks links.md                        # every link in a .txt / .md / any text file
+$ yoinks                                 # prompts for a url — paste one or many
 $ yoinks --theme light                   # force the light palette
 ```
+
+With more than one link you get a review list first: title, site, length,
+uploader and rough size for each. `space` picks, `a` toggles all, `o` opens
+the thumbnail in your browser to double-check it's the right video. Then
+choose one quality for the whole batch and they download one after another.
+Links that can't be fetched are marked and skipped; up to 100 per run.
 
 yoinks takes over the terminal (full-screen, centered — and restores your
 scrollback on exit). Pick a format with ↑/↓ (or j/k, or number keys) and

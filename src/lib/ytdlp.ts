@@ -80,6 +80,8 @@ export type VideoInfo = {
   uploader?: string
   duration?: number
   webpage_url?: string
+  thumbnail?: string
+  filesize_approx?: number
   extractor_key?: string
   formats?: RawFormat[]
 }
@@ -187,6 +189,32 @@ export function buildChoices(info: VideoInfo): DownloadChoice[] {
   return choices
 }
 
+const capped = (height: number): DownloadChoice => ({
+  kind: 'video',
+  label: `up to ${height}p · mp4`,
+  args: ['-f', `bv*[height<=${height}]+ba/b[height<=${height}]/bv*+ba/b`, '--merge-output-format', 'mp4'],
+})
+
+/** One quality for a whole batch — each video falls back to its best when it can't reach the cap. */
+export const BATCH_PRESETS: DownloadChoice[] = [
+  {kind: 'video', label: 'best available · mp4', args: ['-f', 'bv*+ba/b', '--merge-output-format', 'mp4']},
+  capped(1080),
+  capped(720),
+  {kind: 'audio', label: 'audio only · mp3', args: ['-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0']},
+]
+
+/** Rough size of the best video+audio, for the batch review list. */
+export function estimateSize(info: VideoInfo): number | undefined {
+  if (info.filesize_approx) return info.filesize_approx
+  const formats = info.formats ?? []
+  const size = (f?: RawFormat) => f?.filesize ?? f?.filesize_approx ?? 0
+  const best = (list: RawFormat[], score: (f: RawFormat) => number) => [...list].sort((a, b) => score(b) - score(a))[0]
+  const video = best(formats.filter(f => f.vcodec && f.vcodec !== 'none'), f => (f.height ?? 0) * 1e6 + (f.tbr ?? 0))
+  const muxed = video?.acodec && video.acodec !== 'none'
+  const audio = muxed ? undefined : best(formats.filter(f => f.acodec && f.acodec !== 'none' && (!f.vcodec || f.vcodec === 'none')), f => f.abr ?? f.tbr ?? 0)
+  return size(video) + size(audio) || undefined
+}
+
 function scoreVideo(f: RawFormat): number {
   let score = f.tbr ?? 0
   if (f.ext === 'mp4') score += 10_000
@@ -215,19 +243,45 @@ const PROGRESS_TEMPLATE = `${PROGRESS_PREFIX}%(progress.downloaded_bytes)s|%(pro
 let activeChild: ChildProcess | undefined
 process.on('exit', () => activeChild?.kill('SIGTERM'))
 
-export function download(
-  opts: {
-    ytdlp: string
-    ffmpegLocation?: string
-    url: string
-    /** When set, reuse the probe's metadata instead of re-extracting — starts much faster. */
-    infoJsonPath?: string
-    choice: DownloadChoice
-    outDir: string
-  },
-  handlers: DownloadHandlers,
+export type DownloadOptions = {
+  ytdlp: string
+  ffmpegLocation?: string
+  url: string
+  /** When set, reuse the probe's metadata instead of re-extracting — starts much faster. */
+  infoJsonPath?: string
+  choice: DownloadChoice
+  outDir: string
+  /** yt-dlp output template, relative to outDir */
+  outTemplate?: string
+}
+
+/**
+ * download() reusing the probe's metadata first. Media urls in that cached
+ * info can expire, so a failure retries once with a fresh extraction. The
+ * cached info file is removed afterwards either way.
+ */
+export async function downloadWithRetry(
+  opts: DownloadOptions,
+  handlers: DownloadHandlers & {onRefresh: () => void},
   signal?: AbortSignal,
 ): Promise<string> {
+  try {
+    return await download(opts, handlers, signal)
+  } catch (error) {
+    if (signal?.aborted || !opts.infoJsonPath) throw error
+    handlers.onRefresh()
+    return await download({...opts, infoJsonPath: undefined}, handlers, signal)
+  } finally {
+    if (opts.infoJsonPath) void discardInfoJson(opts.infoJsonPath)
+  }
+}
+
+/** Remove a probe's cached info file — they'd otherwise pile up in tmp. */
+export function discardInfoJson(infoJsonPath: string): Promise<void> {
+  return fs.rm(infoJsonPath, {force: true}).catch(() => {})
+}
+
+export function download(opts: DownloadOptions, handlers: DownloadHandlers, signal?: AbortSignal): Promise<string> {
   const args = [
     ...(opts.infoJsonPath ? ['--load-info-json', opts.infoJsonPath] : [opts.url]),
     ...opts.choice.args,
@@ -244,7 +298,7 @@ export function download(
     'after_move:filepath',
     '--no-simulate',
     '-o',
-    path.join(opts.outDir, '%(title).60s.%(ext)s'),
+    path.join(opts.outDir, opts.outTemplate ?? '%(title).60s.%(ext)s'),
   ]
   if (opts.ffmpegLocation) args.push('--ffmpeg-location', opts.ffmpegLocation)
 

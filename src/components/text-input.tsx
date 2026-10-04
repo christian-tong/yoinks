@@ -156,10 +156,11 @@ export function TextInput({
 
     if (!input) return
     // typed or pasted text — drop leaked mouse reports (a click elsewhere on
-    // the screen otherwise pastes `[<0;34;12M`), control chars and newlines,
-    // then replace the selection
+    // the screen otherwise pastes `[<0;34;12M`) and control chars, then
+    // replace the selection. newlines become spaces first, so several pasted
+    // links stay apart
     // eslint-disable-next-line no-control-regex
-    const clean = stripMouseReports(input).replace(/[\x00-\x1f\x7f]/g, '')
+    const clean = stripMouseReports(input).replace(/[\r\n]+/g, ' ').replace(/[\x00-\x1f\x7f]/g, '')
     if (!clean) return
     const [start, end] = selection ?? [cursor, cursor]
     const next = value.slice(0, start) + clean + value.slice(end)
