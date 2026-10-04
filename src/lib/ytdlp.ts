@@ -6,6 +6,7 @@ import path from 'node:path'
 import {Readable} from 'node:stream'
 import {pipeline} from 'node:stream/promises'
 import {formatBytes} from './format.js'
+import {detectPlatform} from './platforms.js'
 
 const YOINKS_DIR = path.join(os.homedir(), '.yoinks', 'bin')
 const RELEASE_BASE = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download'
@@ -133,6 +134,28 @@ export async function probe(ytdlp: string, url: string, signal?: AbortSignal): P
   await fs.writeFile(infoJsonPath, stdout)
   return {info, infoJsonPath}
 }
+
+/**
+ * Text made safe to use literally inside a yt-dlp output template: no
+ * characters Windows rejects in file names, and `%` escaped.
+ */
+export function safeSegment(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  const clean = text.replace(/[<>:"/\\|?*\x00-\x1f]/g, '').replace(/[. ]+$/, '').trim()
+  return (clean || '_').replaceAll('%', '%%')
+}
+
+const PLATFORM_FOLDERS: Record<string, string> = {x: 'X', youtube: 'YouTube'}
+
+/** Per-platform folder name, so Instagram and TikTok videos don't mix. */
+export function platformFolder(url: string): string {
+  const platform = detectPlatform(url)
+  if (platform.key === 'generic') return safeSegment(platform.label.replace(/^www\./, ''))
+  return safeSegment(PLATFORM_FOLDERS[platform.key] ?? platform.label)
+}
+
+/** Output template for a video, relative to the videos folder. */
+export const videoTemplate = (url: string) => `${platformFolder(url)}/%(title).60s [%(id)s].%(ext)s`
 
 export type DownloadChoice = {
   label: string

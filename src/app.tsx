@@ -13,6 +13,7 @@ import {Shortcuts} from './components/shortcuts.js'
 import {TextInput} from './components/text-input.js'
 import {clickTargetAt, findFrameRow, frameRowSpan, type ClickTarget} from './lib/click-map.js'
 import {formatBytes, formatDuration, formatEta, formatSpeed, shortenPath, truncate, wrapText} from './lib/format.js'
+import {loadConfig} from './lib/config.js'
 import {addToHistory, loadHistory} from './lib/history.js'
 import {extractUrls, MAX_LINKS} from './lib/links.js'
 import {openExternal} from './lib/open.js'
@@ -28,19 +29,17 @@ import {
   estimateSize,
   findFfmpeg,
   probe,
+  videoTemplate,
   type DownloadChoice,
   type DownloadProgress,
   type VideoInfo,
 } from './lib/ytdlp.js'
 
-const OUT_DIR = path.join(os.homedir(), 'Downloads')
 const YOINK_BUTTON = 'yoink'
 const DONE_LABEL = '↵ yoink another'
 const TAGLINE = 'yoink any video. paste. yoink. done.'
 // ponytail: fixed pool — quick enough without tripping site rate limits
 const PROBE_CONCURRENCY = 3
-// the id keeps two videos with the same title from overwriting each other
-const BATCH_TEMPLATE = '%(title).60s [%(id)s].%(ext)s'
 
 const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -288,6 +287,7 @@ function AppContent({
   const [url, setUrl] = useState(initialUrls.join(' '))
   const [urlInput, setUrlInput] = useState('')
   const [history, setHistory] = useState(loadHistory)
+  const [config] = useState(loadConfig)
   const [platform, setPlatform] = useState<Platform>()
   const [info, setInfo] = useState<VideoInfo>()
   const [choices, setChoices] = useState<DownloadChoice[]>([])
@@ -474,7 +474,15 @@ function AppContent({
         const infoJsonPath = infoJsonRef.current
         infoJsonRef.current = undefined // downloadWithRetry cleans it up
         const filepath = await downloadWithRetry(
-          {ytdlp: ytdlpRef.current, ffmpegLocation, url, infoJsonPath, choice, outDir: OUT_DIR},
+          {
+            ytdlp: ytdlpRef.current,
+            ffmpegLocation,
+            url,
+            infoJsonPath,
+            choice,
+            outDir: config.videoDir,
+            outTemplate: videoTemplate(url),
+          },
           downloadHandlers,
           controller.signal,
         )
@@ -511,8 +519,8 @@ function AppContent({
               url: item.url,
               infoJsonPath: item.infoJsonPath,
               choice,
-              outDir: OUT_DIR,
-              outTemplate: BATCH_TEMPLATE,
+              outDir: config.videoDir,
+              outTemplate: videoTemplate(item.url),
             },
             downloadHandlers,
             controller.signal,
@@ -768,7 +776,7 @@ function AppContent({
             <Text bold color={theme.primary}>✓ {phase.saved.length} yoinked</Text>
             {phase.failed.length > 0 ? <Text color={theme.primary}> · ✗ {phase.failed.length} failed</Text> : null}
           </Text>
-          <Text color={theme.gray} dimColor={theme.dimSecondary}>{shortenPath(OUT_DIR, os.homedir(), 60)}</Text>
+          <Text color={theme.gray} dimColor={theme.dimSecondary}>{shortenPath(config.videoDir, os.homedir(), 60)}</Text>
           {phase.failed.slice(0, 5).map(({title, message}, index) => (
             <Text key={index} color={theme.gray} dimColor={theme.dimSecondary}>
               ✗ {truncate(`${title}: ${message}`, contentWidth - 2)}
