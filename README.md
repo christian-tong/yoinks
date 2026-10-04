@@ -7,6 +7,27 @@
 
 yoink any video. paste. yoink. done.
 
+> [!NOTE]
+> **Fork personal.** Este repositorio es un fork de
+> [**yoinks**](https://github.com/pablostanley/yoinks), creado por
+> [Pablo Stanley](https://github.com/pablostanley) y publicado bajo licencia MIT.
+> Es una versión modificada para **uso personal**, no oficial y sin relación
+> con el autor original ni respaldada por él. Todo el crédito del proyecto
+> base es suyo; si buscas la versión oficial, usa la de su repositorio o
+> `npm install -g yoinks`.
+>
+> **Qué agrega este fork**
+> - Varios links a la vez: como argumentos, pegados, o desde un `.txt` / `.md`
+>   (separados por espacios, comas o saltos de línea, con comentarios `#` y `//`).
+> - Lista de revisión antes de descargar: título, sitio, duración, tamaño,
+>   links inválidos y repetidos marcados, y `o` para ver la miniatura.
+> - Una calidad para todo el lote y descargas una tras otra.
+> - Selector nativo de archivos (`^o`) y de carpeta de destino (`^d`).
+> - Una carpeta por plataforma: `~/Downloads/yoinks/Instagram`, `…/TikTok`, …
+> - Modo música (`^g` o `--music`): mp3 con portada y etiquetas en
+>   `~/Music/Artista/`, y álbumes o playlists en `Artista/Álbum/01 Canción.mp3`.
+> - Íconos para accesos directos de escritorio (`npm run icons`).
+
 Download videos from YouTube, X/Twitter, Instagram, Threads, TikTok and
 1,800+ other sites — right from your terminal. Paste a url, pick a
 resolution (or audio-only mp3), done. No popups, no fake download buttons,
@@ -16,14 +37,15 @@ no sketchy redirects.
 
 ## Install
 
-```sh
-npm install -g yoinks
-```
-
-Or try it without installing anything:
+This fork isn't published to npm (`npm install -g yoinks` gets the original).
+Install it from source:
 
 ```sh
-npx yoinks
+git clone __FORK_URL__.git
+cd yoinks
+npm ci
+npm run build
+npm install -g .     # links the global `yoinks` command to this folder
 ```
 
 Requires Node 18+. Everything else (yt-dlp, ffmpeg) is fetched or bundled
@@ -125,4 +147,16 @@ keep, and be excellent to creators.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — the original copyright notice of Pablo Stanley is kept, as
+the license requires; the modifications in this fork are released under the
+same MIT terms.
+
+Third-party software used at runtime keeps its own license:
+
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — Unlicense (downloaded on first
+  run, not included in this repo)
+- [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static) — GPL-3.0-or-later
+  (installed by npm, not included in this repo); the FFmpeg binaries it
+  provides are under their own GPL/LGPL terms
+- [Ink](https://github.com/vadimdemedes/ink), ink-select-input, ink-spinner,
+  [React](https://github.com/facebook/react) — MIT
