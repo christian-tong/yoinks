@@ -40,3 +40,22 @@ export function isProbablyUrl(input: string): boolean {
     return false
   }
 }
+
+/**
+ * An album or playlist link rather than one song. A YouTube watch link that
+ * happens to carry `&list=` is still just the one video.
+ */
+export function isCollectionUrl(url: string): boolean {
+  let u: URL
+  try {
+    u = new URL(url)
+  } catch {
+    return false
+  }
+  if (detectPlatform(url).key === 'youtube') {
+    if (u.pathname.startsWith('/playlist') || u.pathname.startsWith('/browse/')) return true
+    return u.searchParams.has('list') && !u.searchParams.has('v') && u.hostname !== 'youtu.be'
+  }
+  // soundcloud sets, bandcamp albums, generic /playlist/ paths
+  return /\/(?:sets|album|playlist)s?\//.test(u.pathname)
+}

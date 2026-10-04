@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import {isCollectionUrl} from './platforms.js'
 import {musicChoice, musicTemplate, platformFolder, safeSegment, videoTemplate} from './ytdlp.js'
 
 test('safeSegment strips characters windows rejects and escapes template percent signs', () => {
@@ -26,4 +27,14 @@ test('music goes into artist folders, albums get their own numbered folder', () 
   const args = musicChoice({title: 'Hits: 50% Off', index: 7}).args
   assert.ok(args.includes('--embed-thumbnail') && args.includes('--embed-metadata'))
   assert.ok(args.includes('Hits\\: 50%% Off:(?P<album>.+)') && args.includes('7:(?P<track_number>.+)'))
+})
+
+test('tells album and playlist links apart from single songs', () => {
+  assert.equal(isCollectionUrl('https://music.youtube.com/playlist?list=OLAK5uy_x'), true)
+  assert.equal(isCollectionUrl('https://music.youtube.com/browse/MPREb_x'), true)
+  assert.equal(isCollectionUrl('https://www.youtube.com/watch?v=abc&list=PLx'), false)
+  assert.equal(isCollectionUrl('https://youtu.be/abc?list=PLx'), false)
+  assert.equal(isCollectionUrl('https://music.youtube.com/watch?v=abc'), false)
+  assert.equal(isCollectionUrl('https://soundcloud.com/artist/sets/album'), true)
+  assert.equal(isCollectionUrl('https://soundcloud.com/artist/song'), false)
 })

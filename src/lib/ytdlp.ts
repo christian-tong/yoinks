@@ -90,6 +90,20 @@ export type VideoInfo = {
   filesize_approx?: number
   extractor_key?: string
   formats?: RawFormat[]
+  channel?: string
+  /** 'playlist' when the url was an album/playlist probed with `playlist: true` */
+  _type?: string
+  entries?: FlatEntry[]
+}
+
+/** A playlist entry from --flat-playlist: enough to list it, not to download it. */
+export type FlatEntry = {
+  id?: string
+  url?: string
+  title?: string
+  duration?: number
+  uploader?: string
+  channel?: string
 }
 
 type RawFormat = {
@@ -111,9 +125,16 @@ export type ProbeResult = {
   infoJsonPath: string
 }
 
-export async function probe(ytdlp: string, url: string, signal?: AbortSignal): Promise<ProbeResult> {
+export async function probe(
+  ytdlp: string,
+  url: string,
+  signal?: AbortSignal,
+  /** list an album/playlist's songs (cheap, flat) instead of one video */
+  {playlist = false} = {},
+): Promise<ProbeResult> {
+  const mode = playlist ? ['--flat-playlist'] : ['--no-playlist']
   const stdout = await new Promise<string>((resolve, reject) => {
-    const child = spawn(ytdlp, ['-J', '--no-playlist', '--no-warnings', url], {signal})
+    const child = spawn(ytdlp, ['-J', ...mode, '--no-warnings', url], {signal})
     let out = ''
     let stderr = ''
     child.stdout.on('data', chunk => (out += chunk))

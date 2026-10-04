@@ -18,7 +18,7 @@ import {pickFile, pickFolder} from './lib/dialogs.js'
 import {addToHistory, loadHistory} from './lib/history.js'
 import {extractUrls, looksLikeFile, MAX_LINKS, readLinkFile} from './lib/links.js'
 import {openExternal, openFolder} from './lib/open.js'
-import {detectPlatform, type Platform} from './lib/platforms.js'
+import {detectPlatform, isCollectionUrl, type Platform} from './lib/platforms.js'
 import {useMouseClick} from './lib/use-mouse-click.js'
 import {nextThemeMode, ThemeProvider, type ThemeMode, useTheme} from './theme.js'
 import {
@@ -100,6 +100,8 @@ function indeterminateMeta(progress: DownloadProgress): string {
 export type Outcome = {filepaths: string[]}
 
 type BatchItem = {
+  /** stable id — positions shift when an album expands into its songs */
+  key: number
   url: string
   status: 'probing' | 'ok' | 'error'
   selected: boolean
@@ -108,6 +110,30 @@ type BatchItem = {
   error?: string
   /** set for songs that came from an album or playlist */
   album?: AlbumSlot
+}
+
+let nextKey = 0
+
+/** One review row per song of a flat-probed album/playlist. */
+function albumSongs(playlist: VideoInfo): BatchItem[] {
+  // YouTube Music titles albums "Album - Name"
+  const title = playlist.title.replace(/^Album\s*[-–]\s*/i, '')
+  const artist = playlist.uploader ?? playlist.channel
+  return (playlist.entries ?? [])
+    .filter(entry => entry.url)
+    .map((entry, index) => ({
+      key: nextKey++,
+      url: entry.url!,
+      status: 'ok',
+      selected: true,
+      info: {
+        id: entry.id,
+        title: entry.title ?? entry.id ?? 'untitled',
+        duration: entry.duration,
+        uploader: entry.uploader ?? entry.channel ?? artist,
+      },
+      album: {title, index: index + 1},
+    }))
 }
 
 const isReady = (item: BatchItem) => item.status === 'ok'
@@ -368,7 +394,7 @@ function AppContent({
     }
   }, [])
 
-  const startBatch = useCallback(async (urls: string[]) => {
+  const startBatch = useCallback(async (urls: string[], {music = false} = {}) => {
     const controller = new AbortController()
     abortRef.current = controller
     setPlatform({key: 'batch', label: `${urls.length} links`})
@@ -379,23 +405,33 @@ function AppContent({
         (await ensureYtDlp(status => setPhase({name: 'probing', status}), controller.signal))
       ytdlpRef.current = ytdlp
       if (controller.signal.aborted) return
-      setBatch(urls.map(url => ({url, status: 'probing', selected: true})))
+      const items: BatchItem[] = urls.map(url => ({key: nextKey++, url, status: 'probing', selected: true}))
+      setBatch(items)
       setReviewCursor(0)
       setPhase({name: 'reviewing'})
-      const update = (index: number, patch: Partial<BatchItem>) =>
-        setBatch(prev => prev.map((item, i) => (i === index ? {...item, ...patch} : item)))
+      const update = (key: number, patch: Partial<BatchItem>) =>
+        setBatch(prev => prev.map(item => (item.key === key ? {...item, ...patch} : item)))
       let next = 0
       const worker = async () => {
-        while (next < urls.length && !controller.signal.aborted) {
-          const index = next++
+        while (next < items.length && !controller.signal.aborted) {
+          const {key, url} = items[next++]!
           try {
-            const {info: videoInfo, infoJsonPath} = await probe(ytdlp, urls[index]!, controller.signal)
+            const playlist = music && isCollectionUrl(url)
+            const {info: videoInfo, infoJsonPath} = await probe(ytdlp, url, controller.signal, {playlist})
             if (controller.signal.aborted) return void discardInfoJson(infoJsonPath)
-            update(index, {status: 'ok', info: videoInfo, infoJsonPath})
+            if (videoInfo._type === 'playlist') {
+              // songs download one by one by their own url — the album's info isn't needed again
+              void discardInfoJson(infoJsonPath)
+              const songs = albumSongs(videoInfo)
+              if (songs.length === 0) update(key, {status: 'error', selected: false, error: 'empty playlist'})
+              else setBatch(prev => prev.flatMap(item => (item.key === key ? songs : [item])))
+              continue
+            }
+            update(key, {status: 'ok', info: videoInfo, infoJsonPath})
           } catch (error) {
             if (controller.signal.aborted) return
             // one bad link shouldn't sink the rest — it just can't be picked
-            update(index, {status: 'error', selected: false, error: errorMessage(error)})
+            update(key, {status: 'error', selected: false, error: errorMessage(error)})
           }
         }
       }
@@ -407,9 +443,9 @@ function AppContent({
   }, [])
 
   useEffect(() => {
-    if (initialUrls.length === 1) void startProbe(initialUrls[0]!)
-    else if (initialUrls.length > 1) void startBatch(initialUrls)
-  }, [initialUrls, startProbe, startBatch])
+    if (initialUrls.length === 1 && !initialMusic) void startProbe(initialUrls[0]!)
+    else if (initialUrls.length > 0) void startBatch(initialUrls, {music: initialMusic})
+  }, [initialUrls, initialMusic, startProbe, startBatch])
 
   const resetToInput = useCallback(() => {
     // cached probe info for anything that wasn't downloaded
@@ -491,7 +527,7 @@ function AppContent({
     setUrl(urls.join(' '))
     // music always goes through the review list — it's where you check the song
     if (urls.length === 1 && !music) void startProbe(urls[0]!)
-    else void startBatch(urls)
+    else void startBatch(urls, {music})
   }
 
   const submitFile = (filepath: string) => {
@@ -802,7 +838,7 @@ function AppContent({
             const current = listStart + offset === reviewCursor
             return (
               <Text
-                key={item.url}
+                key={item.key}
                 bold={current}
                 color={item.status === 'ok' ? theme.primary : theme.gray}
                 dimColor={item.status !== 'ok' && theme.dimSecondary}
