@@ -13,9 +13,10 @@ import {Shortcuts} from './components/shortcuts.js'
 import {TextInput} from './components/text-input.js'
 import {clickTargetAt, findFrameRow, frameRowSpan, type ClickTarget} from './lib/click-map.js'
 import {formatBytes, formatDuration, formatEta, formatSpeed, shortenPath, truncate, wrapText} from './lib/format.js'
-import {loadConfig} from './lib/config.js'
+import {loadConfig, saveConfig} from './lib/config.js'
+import {pickFile, pickFolder} from './lib/dialogs.js'
 import {addToHistory, loadHistory} from './lib/history.js'
-import {extractUrls, MAX_LINKS} from './lib/links.js'
+import {extractUrls, looksLikeFile, MAX_LINKS, readLinkFile} from './lib/links.js'
 import {openExternal} from './lib/open.js'
 import {detectPlatform, type Platform} from './lib/platforms.js'
 import {useMouseClick} from './lib/use-mouse-click.js'
@@ -287,7 +288,7 @@ function AppContent({
   const [url, setUrl] = useState(initialUrls.join(' '))
   const [urlInput, setUrlInput] = useState('')
   const [history, setHistory] = useState(loadHistory)
-  const [config] = useState(loadConfig)
+  const [config, setConfig] = useState(loadConfig)
   const [platform, setPlatform] = useState<Platform>()
   const [info, setInfo] = useState<VideoInfo>()
   const [choices, setChoices] = useState<DownloadChoice[]>([])
@@ -427,6 +428,10 @@ function AppContent({
         return
       }
       if (key.escape && phase.name !== 'input') goBack()
+      if (key.ctrl && phase.name === 'input') {
+        if (input === 'o') openList()
+        if (input === 'd') chooseFolder()
+      }
       if (key.return && (phase.name === 'error' || phase.name === 'done' || phase.name === 'batch-done')) resetToInput()
       if (phase.name === 'reviewing') {
         if (key.upArrow) setReviewCursor(cursor => Math.max(0, cursor - 1))
@@ -440,16 +445,42 @@ function AppContent({
     {isActive: Boolean(process.stdin.isTTY)},
   )
 
-  const handleUrlSubmit = (value: string) => {
-    const urls = extractUrls(value).slice(0, MAX_LINKS)
-    if (urls.length === 0) {
-      setPhase({name: 'input', warning: 'that doesn’t look like a link — paste a full url'})
-      return
-    }
+  const startLinks = (urls: string[]) => {
     setUrl(urls.join(' '))
     if (urls.length === 1) void startProbe(urls[0]!)
     else void startBatch(urls)
   }
+
+  const submitFile = (filepath: string) => {
+    const list = readLinkFile(filepath)
+    if ('error' in list) return setPhase({name: 'input', warning: list.error})
+    if (list.urls.length === 0) return setPhase({name: 'input', warning: `no valid links — ${list.rejected.join(', ')}`})
+    startLinks(list.urls.slice(0, MAX_LINKS))
+  }
+
+  const handleUrlSubmit = (value: string) => {
+    // a dragged-in or pasted path to a list of links
+    if (looksLikeFile(value)) return submitFile(value)
+    const urls = extractUrls(value).slice(0, MAX_LINKS)
+    if (urls.length === 0) {
+      setPhase({name: 'input', warning: 'that doesn’t look like a link — paste a full url or a file path'})
+      return
+    }
+    startLinks(urls)
+  }
+
+  const showWarning = (error: unknown) => setPhase({name: 'input', warning: errorMessage(error)})
+  const openList = () => {
+    pickFile().then(filepath => filepath && submitFile(filepath), showWarning)
+  }
+  const chooseFolder = () => {
+    pickFolder().then(dir => dir && setConfig(saveConfig({videoDir: dir})), showWarning)
+  }
+  // the clickable row under the input — the footer is already full
+  const inputActions: Array<[string, string, () => void]> = [
+    ['^o', 'open a list', openList],
+    ['^d', `save to ${shortenPath(config.videoDir, os.homedir(), 32)}`, chooseFolder],
+  ]
 
   const clipboardText = clipboardUrls.join(' ')
   const clipboardOffered = clipboardUrls.length > 0 && urlInput === ''
@@ -568,6 +599,7 @@ function AppContent({
   if (phase.name === 'input') {
     // the frame button rows above/below the label are part of the button
     clickTargets.push({match: `  ${YOINK_BUTTON}  `, padY: 1, action: () => handleUrlSubmit(urlInput)})
+    for (const [key, label, action] of inputActions) clickTargets.push({match: `${key} ${label}`, action})
   }
   if (phase.name === 'picking') {
     for (const [index, choice] of choices.entries()) {
@@ -656,7 +688,11 @@ function AppContent({
             <Text color={theme.gray} dimColor={theme.dimSecondary}>
               {clipboardUrls.length === 1 ? 'from your clipboard — ↵ to yoink it' : 'from your clipboard — ↵ to review them'}
             </Text>
-          ) : null}
+          ) : (
+            <Text> </Text>
+          )}
+          <Gap />
+          <Shortcuts items={inputActions.map(([key, label]) => [key, label])} />
         </Box>
       )}
 
