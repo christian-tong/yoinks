@@ -1,11 +1,10 @@
 import React from 'react'
-import fs from 'node:fs'
 import {createRequire} from 'node:module'
 import {render} from 'ink'
 import {App, type Outcome} from './app.js'
 import {captureFrames} from './lib/click-map.js'
 import {parseArgs} from './lib/args.js'
-import {extractUrls, MAX_LINKS} from './lib/links.js'
+import {extractUrls, MAX_LINKS, readLinkFile} from './lib/links.js'
 import {readClipboard} from './lib/clipboard.js'
 import {isProbablyUrl} from './lib/platforms.js'
 
@@ -51,31 +50,24 @@ if (args.version) {
   process.exit(0)
 }
 
-const MAX_FILE_BYTES = 1024 * 1024
-
 function fail(message: string): never {
   console.error(`yoinks: ${message}`)
   process.exit(1)
 }
 
 // a positional that isn't a url is a file of links
+const initialRejected: string[] = []
 function expandInput(input: string): string[] {
   if (isProbablyUrl(input)) return [input]
-  let stat: fs.Stats
-  try {
-    stat = fs.statSync(input)
-  } catch {
-    fail(`“${input}” isn't a link or a file`)
-  }
-  if (!stat.isFile()) fail(`“${input}” isn't a file`)
-  if (stat.size > MAX_FILE_BYTES) fail(`“${input}” is too big — keep link files under 1 MB`)
-  const urls = extractUrls(fs.readFileSync(input, 'utf8'))
-  if (urls.length === 0) fail(`no links found in “${input}”`)
-  return urls
+  const list = readLinkFile(input)
+  if ('error' in list) fail(list.error)
+  initialRejected.push(...list.rejected)
+  return list.urls
 }
 
 const initialUrls = [...new Set(args.inputs.flatMap(expandInput))]
 if (initialUrls.length > MAX_LINKS) fail(`${initialUrls.length} links is too many — ${MAX_LINKS} max per run`)
+if (args.inputs.length > 0 && initialUrls.length === 0) fail(`no usable links — not valid: ${initialRejected.join(', ')}`)
 const initialThemeMode = args.themeMode ?? 'auto'
 
 const isTTY = Boolean(process.stdout.isTTY)
