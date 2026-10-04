@@ -22,14 +22,20 @@ const HELP = `
     $ yoinks https://youtu.be/dQw4w9WgXcQ
     $ yoinks https://x.com/user/status/123456 https://youtu.be/dQw4w9WgXcQ
     $ yoinks links.txt       (every link in a .txt / .md / any text file)
+    $ yoinks -m album.md     (music: mp3 with cover art and tags)
     $ yoinks                 (prompts for a url — paste one or many)
 
+  Link files: links can be split by spaces, commas or new lines.
+  Lines starting with # or // are comments, and so is a trailing " # note".
+
   Options
+    -m, --music     music mode — mp3 + cover + tags into <music>/<artist>/
     --theme <mode>  use auto, light, or dark for this run
     -h, --help      show this help
     -v, --version   show version
 
-  Downloads are saved to ~/Downloads.
+  Videos go to ~/Downloads/yoinks/<platform>/, songs to ~/Music/<artist>/.
+  Change either folder from inside yoinks with ^d.
   Powered by yt-dlp — YouTube, X, Instagram, Threads, TikTok & 1800+ sites.
 `
 

@@ -35,6 +35,7 @@ automatically.
 $ yoinks https://youtu.be/dQw4w9WgXcQ    # straight to the format picker
 $ yoinks <url> <url> …                    # several at once
 $ yoinks links.md                        # every link in a .txt / .md / any text file
+$ yoinks --music album.md                # music: mp3 with cover art and tags
 $ yoinks                                 # prompts for a url — paste one or many
 $ yoinks --theme light                   # force the light palette
 ```
@@ -45,12 +46,35 @@ the thumbnail in your browser to double-check it's the right video. Then
 choose one quality for the whole batch and they download one after another.
 Links that can't be fetched are marked and skipped; up to 100 per run.
 
+Link files are forgiving: links can be split by spaces, commas or new lines,
+`youtube.com/…` without `https://` is fixed for you, and lines starting with
+`#` or `//` (or a trailing ` # note`) are comments. Typos like `htps://…` and
+repeated videos show up in the review list instead of vanishing.
+
+```md
+# road trip
+https://youtu.be/abc, https://www.tiktok.com/@a/video/1   # the funny one
+// later
+instagram.com/reel/xyz
+```
+
+On the home screen, `^o` opens your file browser to pick a list (or drag the
+file onto the terminal and hit enter), and `^d` picks where downloads go.
+Videos are sorted into a folder per site — `~/Downloads/yoinks/Instagram`,
+`…/TikTok`, `…/YouTube` — so they never mix.
+
+**Music mode** (`^g` on the home screen, or `--music`) saves mp3s with the
+cover art (cropped square) and artist / title / album tags filled in, into
+`~/Music/<artist>/<song>.mp3`. Album and playlist links expand into their
+songs and land in `~/Music/<artist>/<album>/01 <song>.mp3`. After a batch,
+`o` opens the folder.
+
 yoinks takes over the terminal (full-screen, centered — and restores your
 scrollback on exit). Pick a format with ↑/↓ (or j/k, or number keys) and
 hit enter. `esc` goes back, `^c` quits. Or just use the mouse — the yoink
 button, the format list and the footer hints are all clickable, and
-clicking the logo takes you back home. Files are saved to `~/Downloads`,
-and the file path is printed to your terminal when you're done.
+clicking the logo takes you back home. The saved file paths are printed to
+your terminal when you're done.
 
 The default `auto` theme uses your terminal's own foreground and background,
 so it follows light and dark terminal themes without guessing. Press `^t` or
