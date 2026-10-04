@@ -57,15 +57,19 @@ function fail(message: string): never {
 
 // a positional that isn't a url is a file of links
 const initialRejected: string[] = []
+let initialDuplicates = 0
 function expandInput(input: string): string[] {
   if (isProbablyUrl(input)) return [input]
   const list = readLinkFile(input)
   if ('error' in list) fail(list.error)
   initialRejected.push(...list.rejected)
+  initialDuplicates += list.duplicates
   return list.urls
 }
 
-const initialUrls = [...new Set(args.inputs.flatMap(expandInput))]
+const allUrls = args.inputs.flatMap(expandInput)
+const initialUrls = [...new Set(allUrls)]
+initialDuplicates += allUrls.length - initialUrls.length
 if (initialUrls.length > MAX_LINKS) fail(`${initialUrls.length} links is too many — ${MAX_LINKS} max per run`)
 if (args.inputs.length > 0 && initialUrls.length === 0) fail(`no usable links — not valid: ${initialRejected.join(', ')}`)
 const initialThemeMode = args.themeMode ?? 'auto'
@@ -103,6 +107,8 @@ const {waitUntilExit} = render(
     clipboardUrls={clipboardUrls}
     initialThemeMode={initialThemeMode}
     initialMusic={Boolean(args.music)}
+    initialRejected={initialRejected}
+    initialDuplicates={initialDuplicates}
     onOutcome={result => (outcome = result)}
   />,
   // keep a copy of every frame so clicks can be hit-tested against it

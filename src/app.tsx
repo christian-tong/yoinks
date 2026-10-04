@@ -16,7 +16,7 @@ import {formatBytes, formatDuration, formatEta, formatSpeed, shortenPath, trunca
 import {loadConfig, saveConfig} from './lib/config.js'
 import {pickFile, pickFolder} from './lib/dialogs.js'
 import {addToHistory, loadHistory} from './lib/history.js'
-import {extractUrls, looksLikeFile, MAX_LINKS, readLinkFile} from './lib/links.js'
+import {looksLikeFile, MAX_LINKS, parseLinks, readLinkFile, type LinkList} from './lib/links.js'
 import {openExternal, openFolder} from './lib/open.js'
 import {detectPlatform, isCollectionUrl, type Platform} from './lib/platforms.js'
 import {useMouseClick} from './lib/use-mouse-click.js'
@@ -309,6 +309,9 @@ type AppProps = {
   clipboardUrls: string[]
   initialThemeMode?: ThemeMode
   initialMusic?: boolean
+  /** entries from the cli's link files that weren't usable links */
+  initialRejected?: string[]
+  initialDuplicates?: number
   onOutcome: (outcome: Outcome) => void
 }
 
@@ -329,12 +332,16 @@ function AppContent({
   initialUrls,
   clipboardUrls,
   initialMusic = false,
+  initialRejected = [],
+  initialDuplicates = 0,
   onOutcome,
   cycleTheme,
 }: {
   initialUrls: string[]
   clipboardUrls: string[]
   initialMusic?: boolean
+  initialRejected?: string[]
+  initialDuplicates?: number
   onOutcome: (outcome: Outcome) => void
   cycleTheme: () => void
 }) {
@@ -354,6 +361,8 @@ function AppContent({
   const [choices, setChoices] = useState<DownloadChoice[]>([])
   const [batch, setBatch] = useState<BatchItem[]>([])
   const [reviewCursor, setReviewCursor] = useState(0)
+  // links dropped as exact repeats before probing, for the review summary
+  const [skippedRepeats, setSkippedRepeats] = useState(0)
   const ytdlpRef = useRef('')
   const highlightRef = useRef(0) // choice under the cursor, for the ↵ hint click
   const infoJsonRef = useRef<string | undefined>(undefined)
@@ -394,58 +403,90 @@ function AppContent({
     }
   }, [])
 
-  const startBatch = useCallback(async (urls: string[], {music = false} = {}) => {
-    const controller = new AbortController()
-    abortRef.current = controller
-    setPlatform({key: 'batch', label: `${urls.length} links`})
-    setPhase({name: 'probing', status: 'warming up…'})
-    try {
-      const ytdlp =
-        ytdlpRef.current ||
-        (await ensureYtDlp(status => setPhase({name: 'probing', status}), controller.signal))
-      ytdlpRef.current = ytdlp
-      if (controller.signal.aborted) return
-      const items: BatchItem[] = urls.map(url => ({key: nextKey++, url, status: 'probing', selected: true}))
-      setBatch(items)
-      setReviewCursor(0)
-      setPhase({name: 'reviewing'})
-      const update = (key: number, patch: Partial<BatchItem>) =>
-        setBatch(prev => prev.map(item => (item.key === key ? {...item, ...patch} : item)))
-      let next = 0
-      const worker = async () => {
-        while (next < items.length && !controller.signal.aborted) {
-          const {key, url} = items[next++]!
-          try {
-            const playlist = music && isCollectionUrl(url)
-            const {info: videoInfo, infoJsonPath} = await probe(ytdlp, url, controller.signal, {playlist})
-            if (controller.signal.aborted) return void discardInfoJson(infoJsonPath)
-            if (videoInfo._type === 'playlist') {
-              // songs download one by one by their own url — the album's info isn't needed again
-              void discardInfoJson(infoJsonPath)
-              const songs = albumSongs(videoInfo)
-              if (songs.length === 0) update(key, {status: 'error', selected: false, error: 'empty playlist'})
-              else setBatch(prev => prev.flatMap(item => (item.key === key ? songs : [item])))
-              continue
+  const startBatch = useCallback(
+    async (urls: string[], {music = false, rejected = [] as string[], duplicates = 0} = {}) => {
+      const controller = new AbortController()
+      abortRef.current = controller
+      setPlatform({key: 'batch', label: `${urls.length} links`})
+      setPhase({name: 'probing', status: 'warming up…'})
+      try {
+        const ytdlp =
+          ytdlpRef.current ||
+          (await ensureYtDlp(status => setPhase({name: 'probing', status}), controller.signal))
+        ytdlpRef.current = ytdlp
+        if (controller.signal.aborted) return
+        const items: BatchItem[] = urls.map(url => ({key: nextKey++, url, status: 'probing', selected: true}))
+        // shown so a typo in the list doesn't vanish silently
+        const invalid: BatchItem[] = rejected.map(entry => ({
+          key: nextKey++,
+          url: entry,
+          status: 'error',
+          selected: false,
+          error: 'not a valid link',
+        }))
+        setBatch([...items, ...invalid])
+        setSkippedRepeats(duplicates)
+        setReviewCursor(0)
+        setPhase({name: 'reviewing'})
+        const update = (key: number, patch: Partial<BatchItem>) =>
+          setBatch(prev => prev.map(item => (item.key === key ? {...item, ...patch} : item)))
+        // youtu.be/X and youtube.com/watch?v=X are the same video — only the id tells
+        const isRepeat = (list: BatchItem[], key: number, id?: string) =>
+          Boolean(id) && list.some(item => item.key !== key && item.status === 'ok' && item.info?.id === id)
+        const repeated = {status: 'error', selected: false, error: 'repeated — already in the list'} as const
+        let next = 0
+        const worker = async () => {
+          while (next < items.length && !controller.signal.aborted) {
+            const {key, url} = items[next++]!
+            try {
+              const playlist = music && isCollectionUrl(url)
+              const {info: videoInfo, infoJsonPath} = await probe(ytdlp, url, controller.signal, {playlist})
+              if (controller.signal.aborted) return void discardInfoJson(infoJsonPath)
+              if (videoInfo._type === 'playlist') {
+                // songs download one by one by their own url — the album's info isn't needed again
+                void discardInfoJson(infoJsonPath)
+                const songs = albumSongs(videoInfo)
+                if (songs.length === 0) update(key, {status: 'error', selected: false, error: 'empty playlist'})
+                else {
+                  setBatch(prev =>
+                    prev.flatMap(item =>
+                      item.key === key
+                        ? songs.map(song => (isRepeat(prev, song.key, song.info?.id) ? {...song, ...repeated} : song))
+                        : [item],
+                    ),
+                  )
+                }
+                continue
+              }
+              setBatch(prev => {
+                const repeat = isRepeat(prev, key, videoInfo.id)
+                if (repeat) void discardInfoJson(infoJsonPath)
+                const patch: Partial<BatchItem> = repeat ? repeated : {status: 'ok', info: videoInfo, infoJsonPath}
+                return prev.map(item => (item.key === key ? {...item, ...patch} : item))
+              })
+            } catch (error) {
+              if (controller.signal.aborted) return
+              // one bad link shouldn't sink the rest — it just can't be picked
+              update(key, {status: 'error', selected: false, error: errorMessage(error)})
             }
-            update(key, {status: 'ok', info: videoInfo, infoJsonPath})
-          } catch (error) {
-            if (controller.signal.aborted) return
-            // one bad link shouldn't sink the rest — it just can't be picked
-            update(key, {status: 'error', selected: false, error: errorMessage(error)})
           }
         }
+        await Promise.all(Array.from({length: Math.min(PROBE_CONCURRENCY, urls.length)}, worker))
+      } catch (error) {
+        if (controller.signal.aborted) return
+        setPhase({name: 'error', message: errorMessage(error)})
       }
-      await Promise.all(Array.from({length: Math.min(PROBE_CONCURRENCY, urls.length)}, worker))
-    } catch (error) {
-      if (controller.signal.aborted) return
-      setPhase({name: 'error', message: errorMessage(error)})
-    }
-  }, [])
+    },
+    [],
+  )
 
   useEffect(() => {
-    if (initialUrls.length === 1 && !initialMusic) void startProbe(initialUrls[0]!)
-    else if (initialUrls.length > 0) void startBatch(initialUrls, {music: initialMusic})
-  }, [initialUrls, initialMusic, startProbe, startBatch])
+    const simple = initialUrls.length === 1 && !initialMusic && initialRejected.length === 0
+    if (simple) void startProbe(initialUrls[0]!)
+    else if (initialUrls.length > 0) {
+      void startBatch(initialUrls, {music: initialMusic, rejected: initialRejected, duplicates: initialDuplicates})
+    }
+  }, [initialUrls, initialMusic, initialRejected, initialDuplicates, startProbe, startBatch])
 
   const resetToInput = useCallback(() => {
     // cached probe info for anything that wasn't downloaded
@@ -523,29 +564,30 @@ function AppContent({
     {isActive: Boolean(process.stdin.isTTY)},
   )
 
-  const startLinks = (urls: string[]) => {
-    setUrl(urls.join(' '))
-    // music always goes through the review list — it's where you check the song
-    if (urls.length === 1 && !music) void startProbe(urls[0]!)
-    else void startBatch(urls, {music})
+  const startLinks = ({urls, rejected, duplicates}: LinkList) => {
+    if (urls.length === 0) {
+      const warning = rejected.length
+        ? `no valid links — ${rejected.join(', ')}`
+        : 'that doesn’t look like a link — paste a full url or a file path'
+      return setPhase({name: 'input', warning})
+    }
+    const capped = urls.slice(0, MAX_LINKS)
+    setUrl(capped.join(' '))
+    // music, and lists with problems, go through the review list — it's where you check them
+    if (capped.length === 1 && !music && rejected.length === 0) void startProbe(capped[0]!)
+    else void startBatch(capped, {music, rejected, duplicates})
   }
 
   const submitFile = (filepath: string) => {
     const list = readLinkFile(filepath)
     if ('error' in list) return setPhase({name: 'input', warning: list.error})
-    if (list.urls.length === 0) return setPhase({name: 'input', warning: `no valid links — ${list.rejected.join(', ')}`})
-    startLinks(list.urls.slice(0, MAX_LINKS))
+    startLinks(list)
   }
 
   const handleUrlSubmit = (value: string) => {
     // a dragged-in or pasted path to a list of links
     if (looksLikeFile(value)) return submitFile(value)
-    const urls = extractUrls(value).slice(0, MAX_LINKS)
-    if (urls.length === 0) {
-      setPhase({name: 'input', warning: 'that doesn’t look like a link — paste a full url or a file path'})
-      return
-    }
-    startLinks(urls)
+    startLinks(parseLinks(value))
   }
 
   const showWarning = (error: unknown) => setPhase({name: 'input', warning: errorMessage(error)})
@@ -730,7 +772,8 @@ function AppContent({
     `${pickedItems.length}/${batch.filter(isReady).length} picked`,
     pickedSize ? `~${formatBytes(pickedSize)}` : '',
     loadingCount ? `checking ${loadingCount} more…` : '',
-    failedCount ? `${failedCount} unavailable` : '',
+    failedCount ? `${failedCount} skipped` : '',
+    skippedRepeats ? `${skippedRepeats} repeated` : '',
     batch.length > listRows ? `${reviewCursor + 1}/${batch.length}` : '',
   ]
     .filter(Boolean)
@@ -754,7 +797,7 @@ function AppContent({
               placeholder={music ? 'https://music.youtube.com/watch?v=…' : 'https://youtube.com/watch?v=…'}
               width={boxWidth - 6}
               history={history}
-              submitOnPaste={value => extractUrls(value).length > 0}
+              submitOnPaste={value => parseLinks(value).urls.length > 0}
               onTab={() => {
                 if (clipboardOffered) setUrlInput(clipboardText)
               }}
